@@ -3,6 +3,10 @@
 A tempo-synced volume ducker for Ableton Live, built as a Max for Live device.
 Draw the shape of the dip, or pick a preset.
 
+![PumpShaper: curve editor with preset strip and waveform, beside the rate, trigger, mix, smooth, shift and crossover controls](docs/screenshot.png)
+
+*The device running in Max with a test tone.*
+
 - Curve editor with 8 presets and a live waveform
 - Rates from 1 bar to 1/16, including dotted and triplet
 - Tempo sync, or MIDI triggering from your own kick pattern
