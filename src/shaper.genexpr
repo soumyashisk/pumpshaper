@@ -1,0 +1,110 @@
+// PumpShaper DSP (gen~ codebox).
+// in1/in2: audio L/R    in3: transport-locked 0..1 ramp
+// out1/out2: audio      out3: curve position   out4: gain
+//
+// The curve buffer stores ATTENUATION (0 = untouched), so an empty or not yet
+// written buffer passes audio through instead of muting the track.
+
+// Topology-preserving-transform state variable filter (stable while swept).
+svf(x, g, k) {
+	History s1(0);
+	History s2(0);
+	a1 = 1 / (1 + g * (g + k));
+	a2 = g * a1;
+	a3 = g * a2;
+	v3 = x - s2;
+	v1 = a1 * s1 + a2 * v3;
+	v2 = s2 + a2 * s1 + a3 * v3;
+	s1 = 2 * v1 - s1;
+	s2 = 2 * v2 - s2;
+	return v2, x - k * v1 - v2;
+}
+
+// 4th order Linkwitz-Riley split: low + high sums flat.
+lr4(x, g) {
+	k = 1.4142135623731;
+	lp1, hp1 = svf(x, g, k);
+	lp2, unused1 = svf(lp1, g, k);
+	unused2, hp2 = svf(hp1, g, k);
+	return lp2, hp2;
+}
+
+Buffer curve("curve");
+Buffer scopein("scopein");
+Buffer scopeout("scopeout");
+
+Param depth(1);
+Param mode(0);        // 0 = tempo sync, 1 = triggered one-shot
+Param lowonly(0);
+Param xover(150);
+Param smoothms(2);
+Param shift(0);       // sync mode only, fraction of a cycle
+Param trig(0);        // any change restarts the one-shot
+Param oneshotms(468.75);
+
+History prevramp(0);
+History still(100000);
+History lasttrig(0);
+History wasrunning(0);
+History preroll(0);
+History shot(1);
+History gain(1);
+History lowmix(0);
+History lastbin(-1);
+History peakin(0);
+History peakout(0);
+
+// A locked phasor~ freezes when the transport stops: detect that and let go.
+moved = abs(in3 - prevramp) > 0.000000000001;
+still = moved ? 0 : min(still + 1, 100000);
+prevramp = in3;
+running = still < 64;
+
+// On play, the first clock reading can sit just BEFORE the downbeat (about
+// 0.997), where the curve is wide open. Treat that sliver as the downbeat.
+starting = running && !wasrunning;
+wasrunning = running;
+preroll = starting ? in3 > 0.95 : (preroll && in3 > 0.95);
+ramp = preroll ? 0 : in3;
+
+fired = trig != lasttrig;
+lasttrig = trig;
+increment = 1 / max(1, oneshotms * 0.001 * samplerate);
+shot = fired ? 0 : min(shot + increment, 1);
+
+position = mode > 0.5 ? shot : wrap(ramp + shift, 0, 1);
+active = mode > 0.5 ? shot < 1 : running;
+
+atten = peek(curve, position * (dim(curve) - 1), 0, interp="linear");
+target = active ? 1 - clamp(atten, 0, 1) * depth : 1;
+coef = exp(-1 / max(1, smoothms * 0.001 * samplerate));
+// No fade on the first sample of playback, or the first hit slips through.
+snap = starting && mode < 0.5;
+gain = snap ? target : target + coef * (gain - target);
+
+g = tan(3.1415926535898 * clamp(xover, 20, samplerate * 0.45) / samplerate);
+lowL, highL = lr4(in1, g);
+lowR, highR = lr4(in2, g);
+
+// Short crossfade so toggling "low only" does not click.
+lowmix = lowmix + (lowonly - lowmix) * 0.002;
+wetL = mix(in1 * gain, lowL * gain + highL, lowmix);
+wetR = mix(in2 * gain, lowR * gain + highR, lowmix);
+
+// Peak per display bin, for the waveform behind the curve.
+bin = floor(position * (dim(scopein) - 1));
+fresh = bin != lastbin;
+lastbin = bin;
+levelin = max(abs(in1), abs(in2));
+levelout = max(abs(wetL), abs(wetR));
+peakin = fresh ? levelin : max(peakin, levelin);
+peakout = fresh ? levelout : max(peakout, levelout);
+if (active) {
+	poke(scopein, peakin, bin, 0);
+	poke(scopeout, peakout, bin, 0);
+}
+
+out1 = wetL;
+out2 = wetR;
+out3 = active ? position : -1;
+out4 = gain;
