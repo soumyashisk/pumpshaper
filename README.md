@@ -71,3 +71,7 @@ node --test test/*.mjs
 | `src/shaper.genexpr` | Audio engine (`gen~`) |
 | `src/pumpshaper-ui.js` | Curve editor (`v8ui`) |
 | `build.mjs` | Generates the `.amxd` files |
+
+## License
+
+[MIT-0](LICENSE). Use, change, share or sell it; no credit required.
